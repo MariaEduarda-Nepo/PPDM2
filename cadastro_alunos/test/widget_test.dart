@@ -12,7 +12,10 @@ import 'package:cadastro_alunos/main.dart';
 void main() {
   testWidgets('Tela de cadastro exibe campos e botão', (WidgetTester tester) async {
     // Constrói o app e renderiza um frame.
-    await tester.pumpWidget(const MyApp());
+    await tester.pumpWidget(const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: TelaPrincipal(),
+    ));
 
     // Verifica se o título do formulário aparece.
     expect(find.text('Novo Aluno'), findsOneWidget);
@@ -30,7 +33,10 @@ void main() {
   });
 
   testWidgets('Cadastra um aluno e mostra na lista', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
+    await tester.pumpWidget(const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: TelaPrincipal(),
+    ));
 
     // Preenche os campos do formulário.
     await tester.enterText(find.widgetWithText(TextFormField, 'Nome'), 'Maria Silva');

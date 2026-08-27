@@ -1,246 +1,479 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
-void main() {
-  runApp(const MyApp());
-}
+// ---------------------------------------------------------------------------
+// 1) INICIALIZAÇÃO DO APP
+// ---------------------------------------------------------------------------
+// O main() precisa ser assíncrono porque tanto o Flutter (WidgetsFlutterBinding)
+// quanto o Firebase (Firebase.initializeApp) precisam terminar de se preparar
+// ANTES de qualquer tela tentar usar o Firestore. Se o app rodar antes disso,
+// qualquer chamada ao Firebase vai lançar erro.
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Cadastro de Alunos',
+  runApp(
+    const MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primarySwatch: Colors.indigo,
-        useMaterial3: true,
-        inputDecorationTheme: const InputDecorationTheme(
-          border: OutlineInputBorder(),
-        ),
-      ),
-      home: const CadastroAlunosPage(),
-    );
-  }
+      home: TelaPrincipal(),
+    ),
+  );
 }
 
-class Aluno {
-  final String nome;
-  final int idade;
-  final String curso;
-
-  Aluno({required this.nome, required this.idade, required this.curso});
-}
-
-class CadastroAlunosPage extends StatefulWidget {
-  const CadastroAlunosPage({super.key});
+// ---------------------------------------------------------------------------
+// 2) TELA PRINCIPAL
+// ---------------------------------------------------------------------------
+class TelaPrincipal extends StatefulWidget {
+  const TelaPrincipal({super.key});
 
   @override
-  State<CadastroAlunosPage> createState() => _CadastroAlunosPageState();
+  State<TelaPrincipal> createState() => _TelaPrincipalState();
 }
 
-class _CadastroAlunosPageState extends State<CadastroAlunosPage> {
-  final _formKey = GlobalKey<FormState>();
+class _TelaPrincipalState extends State<TelaPrincipal> {
+  // Controllers do formulário de cadastro
+  final TextEditingController nomeController = TextEditingController();
+  final TextEditingController idadeController = TextEditingController();
+  final TextEditingController cursoController = TextEditingController();
+  final TextEditingController emailController = TextEditingController();
 
-  final TextEditingController _nomeController = TextEditingController();
-  final TextEditingController _idadeController = TextEditingController();
-  final TextEditingController _cursoController = TextEditingController();
+  // Controller do campo de pesquisa (Atividade 6)
+  final TextEditingController pesquisaController = TextEditingController();
+  String termoPesquisa = "";
 
-  final List<Aluno> _alunos = [];
-
-  void _cadastrarAluno() {
-    if (_formKey.currentState!.validate()) {
-      final novoAluno = Aluno(
-        nome: _nomeController.text.trim(),
-        idade: int.parse(_idadeController.text.trim()),
-        curso: _cursoController.text.trim(),
-      );
-
-      setState(() {
-        _alunos.add(novoAluno);
-      });
-
-      _nomeController.clear();
-      _idadeController.clear();
-      _cursoController.clear();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Aluno "${novoAluno.nome}" cadastrado com sucesso!'),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    }
-  }
-
-  void _removerAluno(int index) {
-    final nomeRemovido = _alunos[index].nome;
-    setState(() {
-      _alunos.removeAt(index);
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Aluno "$nomeRemovido" removido.')),
-    );
-  }
+  final CollectionReference alunosRef =
+      FirebaseFirestore.instance.collection("alunos");
 
   @override
   void dispose() {
-    _nomeController.dispose();
-    _idadeController.dispose();
-    _cursoController.dispose();
+    nomeController.dispose();
+    idadeController.dispose();
+    cursoController.dispose();
+    emailController.dispose();
+    pesquisaController.dispose();
     super.dispose();
+  }
+
+  // -------------------------------------------------------------------------
+  // CREATE — cadastrar aluno (Atividade 1, 2 e 5)
+  // -------------------------------------------------------------------------
+  Future<void> cadastrarAluno() async {
+    final String nome = nomeController.text.trim();
+    final String idadeTexto = idadeController.text.trim();
+    final String curso = cursoController.text.trim();
+    final String email = emailController.text.trim();
+
+    // Validação (Atividade 2): nenhum campo obrigatório pode ficar vazio.
+    if (nome.isEmpty || idadeTexto.isEmpty || curso.isEmpty) {
+      _mostrarMensagem("Preencha nome, idade e curso antes de cadastrar.");
+      return;
+    }
+
+    // Desafio da seção 17: guardar a idade como número, não como texto.
+    final int? idade = int.tryParse(idadeTexto);
+    if (idade == null) {
+      _mostrarMensagem("Idade inválida. Digite apenas números.");
+      return;
+    }
+
+    try {
+      await alunosRef.add({
+        "nome": nome,
+        "idade": idade,
+        "curso": curso,
+        "email": email, // Atividade 5
+        "criadoEm": FieldValue.serverTimestamp(),
+      });
+
+      nomeController.clear();
+      idadeController.clear();
+      cursoController.clear();
+      emailController.clear();
+
+      _mostrarMensagem("Aluno cadastrado com sucesso!");
+    } catch (e) {
+      _mostrarMensagem("Erro ao cadastrar: $e");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // UPDATE — editar aluno (Atividade 3)
+  // -------------------------------------------------------------------------
+  Future<void> editarAluno(
+    String id,
+    String nomeAtual,
+    int idadeAtual,
+    String cursoAtual,
+    String emailAtual,
+  ) async {
+    final TextEditingController nomeEdit =
+        TextEditingController(text: nomeAtual);
+    final TextEditingController idadeEdit =
+        TextEditingController(text: idadeAtual.toString());
+    final TextEditingController cursoEdit =
+        TextEditingController(text: cursoAtual);
+    final TextEditingController emailEdit =
+        TextEditingController(text: emailAtual);
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Editar aluno"),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nomeEdit,
+                  decoration: const InputDecoration(labelText: "Nome"),
+                ),
+                TextField(
+                  controller: idadeEdit,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: "Idade"),
+                ),
+                TextField(
+                  controller: cursoEdit,
+                  decoration: const InputDecoration(labelText: "Curso"),
+                ),
+                TextField(
+                  controller: emailEdit,
+                  decoration: const InputDecoration(labelText: "E-mail"),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancelar"),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final String novoNome = nomeEdit.text.trim();
+                final String novaIdadeTexto = idadeEdit.text.trim();
+                final String novoCurso = cursoEdit.text.trim();
+                final String novoEmail = emailEdit.text.trim();
+
+                if (novoNome.isEmpty ||
+                    novaIdadeTexto.isEmpty ||
+                    novoCurso.isEmpty) {
+                  _mostrarMensagem("Preencha todos os campos obrigatórios.");
+                  return;
+                }
+
+                final int? novaIdade = int.tryParse(novaIdadeTexto);
+                if (novaIdade == null) {
+                  _mostrarMensagem("Idade inválida.");
+                  return;
+                }
+
+                // Importante: usamos .doc(id).update(), não .add() —
+                // assim alteramos o documento existente em vez de criar um novo.
+                await alunosRef.doc(id).update({
+                  "nome": novoNome,
+                  "idade": novaIdade,
+                  "curso": novoCurso,
+                  "email": novoEmail,
+                });
+
+                if (context.mounted) Navigator.pop(context);
+                _mostrarMensagem("Aluno atualizado com sucesso!");
+              },
+              child: const Text("Salvar"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // DELETE — excluir aluno (Atividade 4)
+  // -------------------------------------------------------------------------
+  Future<void> excluirAluno(String id, String nome) async {
+    final bool? confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Confirmar exclusão"),
+          content: Text("Deseja realmente excluir o aluno $nome?"),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text("CANCELAR"),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text("EXCLUIR"),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmar == true) {
+      await alunosRef.doc(id).delete();
+      _mostrarMensagem("Aluno excluído.");
+    }
+  }
+
+  void _mostrarMensagem(String texto) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(texto), duration: const Duration(seconds: 2)),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // FORMULÁRIO DE CADASTRO
+  // -------------------------------------------------------------------------
+  Widget _buildFormulario() {
+    return Card(
+      margin: const EdgeInsets.all(12),
+      elevation: 3,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            TextField(
+              controller: nomeController,
+              decoration: const InputDecoration(
+                labelText: "Nome",
+                prefixIcon: Icon(Icons.person),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: idadeController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: "Idade",
+                prefixIcon: Icon(Icons.cake),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: cursoController,
+              decoration: const InputDecoration(
+                labelText: "Curso",
+                prefixIcon: Icon(Icons.school),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: emailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: "E-mail",
+                prefixIcon: Icon(Icons.email),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: cadastrarAluno,
+                icon: const Icon(Icons.add),
+                label: const Text("Cadastrar Aluno"),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // CAMPO DE PESQUISA (Atividade 6)
+  // -------------------------------------------------------------------------
+  Widget _buildPesquisa() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: TextField(
+        controller: pesquisaController,
+        decoration: InputDecoration(
+          hintText: "Pesquisar aluno...",
+          prefixIcon: const Icon(Icons.search),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        onChanged: (valor) {
+          setState(() {
+            termoPesquisa = valor.toLowerCase();
+          });
+        },
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // LISTA DE ALUNOS — READ (StreamBuilder) (seções 18-20)
+  // -------------------------------------------------------------------------
+  Widget _buildLista() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: alunosRef.orderBy("nome").snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text("Erro ao carregar alunos: ${snapshot.error}"),
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final documentos = snapshot.data?.docs ?? [];
+
+        // Filtro de pesquisa (Atividade 6): filtra pelo nome conforme digita.
+        final filtrados = documentos.where((doc) {
+          final dados = doc.data() as Map<String, dynamic>;
+          final nome = (dados["nome"] ?? "").toString().toLowerCase();
+          return nome.contains(termoPesquisa);
+        }).toList();
+
+        if (filtrados.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: Text("Nenhum aluno encontrado.")),
+          );
+        }
+
+        return ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          itemCount: filtrados.length,
+          itemBuilder: (context, index) {
+            final doc = filtrados[index];
+            final dados = doc.data() as Map<String, dynamic>;
+
+            final String nome = dados["nome"] ?? "";
+            final int idade = (dados["idade"] is int)
+                ? dados["idade"]
+                : int.tryParse(dados["idade"].toString()) ?? 0;
+            final String curso = dados["curso"] ?? "";
+            final String email = dados["email"] ?? "";
+
+            return Card(
+              margin: const EdgeInsets.symmetric(vertical: 6),
+              elevation: 2,
+              child: ListTile(
+                leading: const CircleIcon(),
+                title: Text(
+                  nome,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                subtitle: Text(
+                  "$idade anos • $curso"
+                  "${email.isNotEmpty ? '\n$email' : ''}",
+                ),
+                isThreeLine: email.isNotEmpty,
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit, color: Colors.blue),
+                      onPressed: () =>
+                          editarAluno(doc.id, nome, idade, curso, email),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      onPressed: () => excluirAluno(doc.id, nome),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // CONTADOR DE ALUNOS (Atividade 7)
+  // -------------------------------------------------------------------------
+  Widget _buildContador() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: alunosRef.snapshots(),
+      builder: (context, snapshot) {
+        final total = snapshot.data?.docs.length ?? 0;
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: Text(
+            "Total de alunos: $total",
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Cadastro de Alunos'),
+        title: const Text("Cadastro de Alunos"),
         centerTitle: true,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
+      body: SingleChildScrollView(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Formulário de cadastro
-            Card(
-              elevation: 3,
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    children: [
-                      Text(
-                        'Novo Aluno',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _nomeController,
-                        decoration: const InputDecoration(
-                          labelText: 'Nome',
-                          prefixIcon: Icon(Icons.person),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Informe o nome do aluno';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _idadeController,
-                        decoration: const InputDecoration(
-                          labelText: 'Idade',
-                          prefixIcon: Icon(Icons.cake),
-                        ),
-                        keyboardType: TextInputType.number,
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Informe a idade';
-                          }
-                          final idade = int.tryParse(value.trim());
-                          if (idade == null) {
-                            return 'Informe um número válido';
-                          }
-                          if (idade <= 0 || idade > 120) {
-                            return 'Informe uma idade válida';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _cursoController,
-                        decoration: const InputDecoration(
-                          labelText: 'Curso',
-                          prefixIcon: Icon(Icons.school),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Informe o curso';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      SizedBox(
-                        height: 48,
-                        child: ElevatedButton.icon(
-                          onPressed: _cadastrarAluno,
-                          icon: const Icon(Icons.add),
-                          label: const Text('Cadastrar'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+            _buildFormulario(),
+            const Divider(height: 1),
+            _buildPesquisa(),
+            _buildContador(),
+            const SizedBox(height: 4),
+            _buildLista(),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Text(
-                  'Alunos Cadastrados',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(width: 8),
-                CircleAvatar(
-                  radius: 12,
-                  backgroundColor: Colors.indigo,
-                  child: Text(
-                    '${_alunos.length}',
-                    style: const TextStyle(color: Colors.white, fontSize: 12),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // Lista de alunos cadastrados
-            Expanded(
-              child: _alunos.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'Nenhum aluno cadastrado ainda.',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    )
-                  : ListView.builder(
-                      itemCount: _alunos.length,
-                      itemBuilder: (context, index) {
-                        final aluno = _alunos[index];
-                        return Card(
-                          margin: const EdgeInsets.symmetric(vertical: 4),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Colors.indigo.shade100,
-                              child: Text(
-                                aluno.nome.isNotEmpty
-                                    ? aluno.nome[0].toUpperCase()
-                                    : '?',
-                                style: const TextStyle(color: Colors.indigo),
-                              ),
-                            ),
-                            title: Text(aluno.nome),
-                            subtitle: Text(
-                              'Idade: ${aluno.idade} • Curso: ${aluno.curso}',
-                            ),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => _removerAluno(index),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
           ],
         ),
       ),
+    );
+  }
+}
+
+// Ícone simples usado como avatar de cada aluno na lista.
+class CircleIcon extends StatelessWidget {
+  const CircleIcon({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const CircleAvatar(
+      backgroundColor: Colors.indigo,
+      child: Icon(Icons.person, color: Colors.white),
     );
   }
 }
